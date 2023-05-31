@@ -1,56 +1,60 @@
 const express = require('express');
-const connectDB = require('./config/db');
-const formData = require('express-form-data');
-
-require('colors');
-require('dotenv').config();
-
-const userRoutes = require('./routes/userRoutes.js');
-
-const reservationRoutes = require('./routes/reservationRoutes.js');
-
-
-
-const morgan = require('morgan');
-const { forgotPassword } = require('./controllers/userController');
-
-
-
-connectDB();
-
 const app = express();
+const MongoClient = require('mongodb').MongoClient;
+const bcrypt = require('bcrypt'); // for password hashing
+const jwt = require('jsonwebtoken'); // for creating tokens
 
-app.use(formData.parse());
-
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-}
-
+// Add this line to use json body in your requests
 app.use(express.json());
-app.use(express.urlencoded({extended: false}));
 
+// Database connection
+MongoClient.connect('mongodb://127.0.0.1:27017', {useUnifiedTopology: true})
+    .then(client => {
+        console.log('Connected to Database');
+        const db = client.db('yourDB');
+        const usersCollection = db.collection('users');
 
+        // Register User
+        app.post('/register', async (req, res) => {
+            const user = req.body;
+            console.log(user)
+            // Check if email already exists in the database
+            const existingUser = await usersCollection.findOne({email: user.email});
+            if (existingUser) {
+                res.status(400).json({error: 'Email already exists'});
+                return;
+            }
 
+            user.password = await bcrypt.hash(user.password, 10); // hash the password before storing
+            await usersCollection.insertOne(user);
+            res.json(user);
+        });
 
-app.use('/api/users', userRoutes);
+        // Login User
+        app.post('/login', async (req, res) => {
+            const user = req.body;
+            console.log(user)
+            const userInDb = await usersCollection.findOne({email: user.email});
 
-app.use('/api/users', reservationRoutes);
-app.use('/api/users',forgotPassword);
+            if (!userInDb) {
+                res.status(400).json({error: 'User not found'});
+                return;
+            }
 
-app.get('*', function(req, res){
-  res.status(404).json({
-    msg: "Api path not found."
-  });
-});
+            const passwordMatch = await bcrypt.compare(user.password, userInDb.password);
+            console.log(passwordMatch)
+            if (!passwordMatch) {
+                res.status(400).json({error: 'Invalid password'});
+                return;
+            }
 
-const PORT = process.env.PORT || 3000;
-app.listen(
-  PORT,
-  console.log(
-    `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`.red,
-  ),
-);
+            const token = jwt.sign({id: userInDb._id}, 'your_secret_key'); // sign a token with user id
 
+            res.json({token});
+        });
 
+        // Listen
+        app.listen(3000, () => console.log('Listening on 3000'));
+    })
+    .catch(console.error);
 
-// hosted server https://news-app-native.herokuapp.com/
